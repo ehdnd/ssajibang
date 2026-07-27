@@ -29,7 +29,7 @@ while running git bash ssh
 
 - host: localhost
 - port: 2222
-- username: codespace
+- username: `{whoami}`
 - keypair: codespace.auto
 
 ### git bash
