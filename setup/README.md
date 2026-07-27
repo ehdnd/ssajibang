@@ -27,9 +27,9 @@ gh codespace ssh --repo ehdnd/spring-mvc-1 --server-port 2222
 
 while running git bash ssh
 
-- username: vscode
 - host: localhost
 - port: 2222
+- username: codespace
 - keypair: codespace.auto
 
 ### git bash
