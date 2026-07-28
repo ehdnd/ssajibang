@@ -67,20 +67,7 @@ else
   warn "이 PC는 Windows build ${BUILD:-unknown} (19041 미만) 이라 PowerToys 건너뜀"
 fi
 
-# 3) JetBrains Gateway
-log "Gateway 다운로드 및 설치"
-if curl -fsSL -o gateway.exe \
-     "https://download.jetbrains.com/product?code=GW&latest&distribution=windows"; then
-  if MSYS_NO_PATHCONV=1 ./gateway.exe /S; then
-    log "Gateway 완료"
-  else
-    warn "Gateway 설치 실패 (권한 문제일 수 있음) - 건너뜀"
-  fi
-else
-  warn "Gateway 다운로드 실패 - 건너뜀"
-fi
-
-# 4) PowerToys .ptb (백업은 수동)
+# 3) PowerToys .ptb (백업은 수동)
 log "PowerToys 설정 백업 다운로드"
 mkdir -p "$PTB_DIR"
 if curl -fsSL -o "$PTB_DIR/$PTB_FILE" "$PTB_URL"; then
@@ -92,3 +79,17 @@ fi
 log "전체 완료"
 log "- 새 Git Bash 창을 열면 gh 사용 가능"
 log "- PowerToys 설정 적용: 설정 > 백업 및 복원 > 복원 에서 위 폴더 지정"
+
+
+# 4) JetBrains Gateway
+log "Gateway 다운로드 및 설치"
+if curl -fsSL -o gateway.exe \
+     "https://download.jetbrains.com/product?code=GW&latest&distribution=windows"; then
+  if MSYS_NO_PATHCONV=1 ./gateway.exe /S; then
+    log "Gateway 완료"
+  else
+    warn "Gateway 설치 실패 (권한 문제일 수 있음) - 건너뜀"
+  fi
+else
+  warn "Gateway 다운로드 실패 - 건너뜀"
+fi
