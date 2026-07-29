@@ -12,7 +12,7 @@ PTB_FILE="settings_134282238737369559.ptb"
 PTB_URL="https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/main/setup/${PTB_FILE}"
 
 GH_DIR="$HOME/tools/gh"
-PTB_DIR="$HOME/ptb-backup"
+PTB_DIR="$HOME/Documents/PowerToys/Backup"
 TMP="$(mktemp -d)"
 
 # helper
