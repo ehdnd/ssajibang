@@ -5,7 +5,7 @@
 #
 # 사전조건: Git for Windows 설치 완료 (Git Bash에서 실행)
 #
-#   curl -fsSL https://raw.githubusercontent.com/ehdnd/ssajibang/main/setup/setup.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/ehdnd/ssajibang/main/setup-ssh/setup.sh | bash
 #
 
 set -eu
@@ -21,7 +21,7 @@ KEY="$HOME/.ssh/id_ed25519_mac"
 GH_OWNER="ehdnd"
 GH_REPO="ssajibang"
 GH_SUBDIR="setup-ssh"
-RAW_BASE="https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/main/setup/${GH_SUBDIR}"
+RAW_BASE="https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/main/${GH_SUBDIR}"
 
 PTB_FILE="settings_134282238737369559.ptb"
 PTB_DIR="$HOME/ptb-backup"
