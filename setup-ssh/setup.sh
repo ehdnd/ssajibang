@@ -195,5 +195,7 @@ echo "════════════════════════�
 echo
 log "세팅 완료. 새 Git Bash 창을 연 뒤 접속하려면:"
 echo
-echo "    connect.sh"
+echo "    connect.sh          # Toolbox (기본)"
+echo "    connect.sh vscode   # VS Code"
+echo "    connect.sh both     # 둘 다"
 echo
