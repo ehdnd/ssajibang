@@ -17,7 +17,7 @@ curl -fsSL https://raw.githubusercontent.com/ehdnd/ssajibang/main/setup-ssh/setu
 - helper scripts
 - ssh key
 
-### next
+### bitwarden
 
 Bitwarden: https://vault.bitwarden.com/#/login
 
@@ -35,7 +35,7 @@ connect.sh none     # 터널만
 터널이 이미 살아 있으면 재사용한다 — Toolbox 사용 중에 `connect.sh vscode` 를
 실행해도 기존 세션은 끊기지 않는다. 이미 실행 중인 앱은 다시 띄우지 않는다.
 
-종료:
+### stop
 
 ```bash
 stop.sh             # 프로세스만
@@ -46,4 +46,21 @@ stop.sh --wipe      # 개인키 · Access 토큰까지 삭제 (공용 PC 이석 
 
 ```bash
 cloudflared.exe access tcp --hostname ssh.11104002.xyz --url localhost:2222
+```
+
+### or 
+
+VS Code만:
+```bash
+taskkill //F //IM Code.exe
+```
+
+JetBrains만 (Toolbox + 백그라운드 서비스):
+```bash
+taskkill //F //IM jetbrains-toolbox.exe //IM jetbrainsd.exe
+```
+
+뭐가 떠 있는지 확인:
+```
+tasklist //NH | grep -iE 'Code.exe|jetbrains|cloudflared'
 ```
