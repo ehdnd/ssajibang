@@ -165,10 +165,15 @@ if [ -f "$KEY" ]; then
   chmod 600 "$KEY"
   log "개인키가 이미 있습니다 — 건너뜀"
 else
+  BW_URL="https://vault.bitwarden.com/#/login"
+  log "Bitwarden 로그인 페이지를 브라우저로 엽니다: $BW_URL"
+  # explorer.exe 는 성공해도 exit 1 을 반환하므로 종료코드는 무시
+  MSYS_NO_PATHCONV=1 explorer.exe "$BW_URL" 2>/dev/null || true
+
   cat << 'GUIDE'
   다음은 수동입니다 — 개인키 배치
 
-  1) 브라우저에서 Bitwarden 로그인 → 개인키 전체 복사
+  1) 열린 브라우저에서 Bitwarden 로그인 → 개인키 전체 복사
      (-----BEGIN 부터 -----END OPENSSH PRIVATE KEY----- 까지)
 
   2) 아래 명령을 복사해서 실행하고, 붙여넣은 뒤 Enter → Ctrl+D
