@@ -24,7 +24,7 @@ GH_SUBDIR="setup-ssh"
 RAW_BASE="https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/main/${GH_SUBDIR}"
 
 PTB_FILE="settings_134282238737369559.ptb"
-PTB_DIR="$HOME/ptb-backup"
+PTB_DIR="$HOME/Documents/PowerToys/Backup"
 
 BIN_DIR="$HOME/bin"
 TMP="$(mktemp -d)"
