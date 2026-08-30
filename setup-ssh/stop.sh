@@ -26,6 +26,7 @@ fi
 taskkill //F //IM cloudflared.exe       >/dev/null 2>&1 || true
 taskkill //F //IM jetbrains-toolbox.exe >/dev/null 2>&1 || true
 taskkill //F //IM jetbrainsd.exe        >/dev/null 2>&1 || true
+taskkill //F //IM Code.exe              >/dev/null 2>&1 || true
 
 # ssh-agent 종료
 if [ -f "$AGENT_ENV" ]; then
