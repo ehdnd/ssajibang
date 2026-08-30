@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 #
 # 싸지방 초기 세팅 — 새 PC에서 한 번만 실행
-#   cloudflared / JetBrains Toolbox / PowerToys / ssh config / 헬퍼 스크립트
+#   cloudflared / IDE(JetBrains Toolbox | VS Code) / PowerToys / ssh config / 헬퍼 스크립트
 #
 # 사전조건: Git for Windows 설치 완료 (Git Bash에서 실행)
 #
 #   curl -fsSL https://raw.githubusercontent.com/ehdnd/ssajibang/main/setup-ssh/setup.sh | bash
+#
+#   설치할 IDE 선택 (기본: toolbox) — connect.sh 와 동일한 이름:
+#     ... | bash -s -- toolbox   # JetBrains Toolbox (기본)
+#     ... | bash -s -- vscode    # VS Code
+#     ... | bash -s -- both      # 둘 다
 #
 
 set -eu
@@ -44,6 +49,22 @@ win_build() {
     | grep -oE '[0-9]{4,}' | tail -1
 }
 
+# ─────────────────────────────────────────────────────────────
+# 설치할 IDE 선택 (connect.sh 와 동일: toolbox | vscode | both)
+#   나머지(cloudflared/PowerToys/ssh config/헬퍼)는 선택과 무관하게 항상 설치
+# ─────────────────────────────────────────────────────────────
+case "${1:-toolbox}" in
+  toolbox|tb)      IDE=toolbox ;;
+  vscode|vs|code)  IDE=vscode  ;;
+  both|all)        IDE=both    ;;
+  -h|--help|help)
+    echo "usage: setup.sh [toolbox|vscode|both]"
+    exit 0 ;;
+  *)
+    die "알 수 없는 IDE: $1  (toolbox | vscode | both)" ;;
+esac
+log "설치할 IDE: $IDE"
+
 mkdir -p "$BIN_DIR"
 cd "$TMP"
 
@@ -78,20 +99,69 @@ fi
 export PATH="$BIN_DIR:$PATH"
 
 # ─────────────────────────────────────────────────────────────
-# 2) JetBrains Toolbox  (실패해도 계속)
+# 2) IDE  (IDE 값에 따라 toolbox / vscode / 둘 다 — 실패해도 계속)
 # ─────────────────────────────────────────────────────────────
-log "JetBrains Toolbox 다운로드"
-if curl -fsSL -o toolbox.exe \
-     "https://download.jetbrains.com/product?code=TBA&latest&distribution=windows"; then
-  log "Toolbox 설치 (조용히 진행, 1~2분)"
-  if MSYS_NO_PATHCONV=1 ./toolbox.exe /S; then
-    log "Toolbox 완료"
+install_toolbox() {
+  log "JetBrains Toolbox 다운로드"
+  if curl -fsSL -o toolbox.exe \
+       "https://download.jetbrains.com/product?code=TBA&latest&distribution=windows"; then
+    log "Toolbox 설치 (조용히 진행, 1~2분)"
+    if MSYS_NO_PATHCONV=1 ./toolbox.exe /S; then
+      log "Toolbox 완료"
+    else
+      warn "Toolbox 설치 실패 — 수동 설치 필요: https://www.jetbrains.com/toolbox-app/"
+    fi
   else
-    warn "Toolbox 설치 실패 — 수동 설치 필요: https://www.jetbrains.com/toolbox-app/"
+    warn "Toolbox 다운로드 실패 — 건너뜀"
   fi
-else
-  warn "Toolbox 다운로드 실패 — 건너뜀"
-fi
+}
+
+install_vscode() {
+  # User Installer — 관리자 권한 불필요. connect.sh 가 찾는 경로(VSCODE_USER)에 설치됨:
+  #   $HOME/AppData/Local/Programs/Microsoft VS Code/Code.exe
+  VSC_DIR="$HOME/AppData/Local/Programs/Microsoft VS Code"
+  VSC_EXE="$VSC_DIR/Code.exe"
+  VSC_CLI="$VSC_DIR/bin/code.cmd"
+
+  log "VS Code 다운로드 (User Installer, x64)"
+  if curl -fsSL -o vscode.exe \
+       "https://update.code.visualstudio.com/latest/win32-x64-user/stable"; then
+    log "VS Code 설치 (조용히 진행)"
+    # Inno Setup: 프롬프트/재부팅/설치후 자동실행 없이
+    MSYS_NO_PATHCONV=1 ./vscode.exe /VERYSILENT /NORESTART /MERGETASKS='!runcode' || true
+
+    # 인스톨러가 백그라운드로 빠지는 경우가 있어 설치 완료를 폴링
+    for _ in $(seq 1 30); do
+      [ -f "$VSC_EXE" ] && break
+      sleep 2
+    done
+
+    if [ -f "$VSC_EXE" ]; then
+      log "VS Code 완료: $VSC_EXE"
+      # Remote-SSH 확장 — connect.sh 로 바로 붙을 수 있게 미리 설치
+      if [ -f "$VSC_CLI" ]; then
+        log "Remote-SSH 확장 설치"
+        if MSYS_NO_PATHCONV=1 "$VSC_CLI" --install-extension ms-vscode-remote.remote-ssh --force >/dev/null 2>&1; then
+          log "Remote-SSH 확장 완료"
+        else
+          warn "Remote-SSH 확장 설치 실패 — VS Code 에서 수동 설치하세요"
+        fi
+      else
+        warn "code CLI 없음 — Remote-SSH 확장은 VS Code 에서 수동 설치하세요"
+      fi
+    else
+      warn "VS Code 설치 확인 실패 — 수동 설치 필요: https://code.visualstudio.com/"
+    fi
+  else
+    warn "VS Code 다운로드 실패 — 건너뜀"
+  fi
+}
+
+case "$IDE" in
+  toolbox) install_toolbox ;;
+  vscode)  install_vscode  ;;
+  both)    install_toolbox; install_vscode ;;
+esac
 
 # ─────────────────────────────────────────────────────────────
 # 3) PowerToys  (빌드 19041 이상, 실패해도 계속)
@@ -193,9 +263,15 @@ GUIDE
 fi
 echo "════════════════════════════════════════════════════════════"
 echo
-log "세팅 완료. 새 Git Bash 창을 연 뒤 접속하려면:"
+log "세팅 완료 (IDE: $IDE). 새 Git Bash 창을 연 뒤 접속하려면:"
 echo
-echo "    connect.sh          # Toolbox (기본)"
-echo "    connect.sh vscode   # VS Code"
-echo "    connect.sh both     # 둘 다"
+case "$IDE" in
+  toolbox) echo "    connect.sh          # Toolbox" ;;
+  vscode)  echo "    connect.sh vscode   # VS Code" ;;
+  both)
+    echo "    connect.sh          # Toolbox (기본)"
+    echo "    connect.sh vscode   # VS Code"
+    echo "    connect.sh both     # 둘 다"
+    ;;
+esac
 echo
