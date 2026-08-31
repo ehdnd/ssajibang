@@ -5,7 +5,7 @@
 ### git bash
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ehdnd/ssajibang/main/setup-ssh/setup.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ehdnd/ssajibang/main/setup-ssh/setup.sh | bash -s -- toolbox 
 ```
 
 ### setup
