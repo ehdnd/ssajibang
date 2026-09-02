@@ -5,7 +5,7 @@
 ### git bash
 
 ```
-curl -sL --compressed https://raw.githubusercontent.com/ehdnd/ssajibang/main/setup-codespaces/setup.sh | bash
+curl -sL --compressed https://raw.githubusercontent.com/ehdnd/ssajibang/refs/heads/main/setup-codespace/setup.sh | bash
 ```
 
 ### setup
