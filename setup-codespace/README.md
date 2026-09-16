@@ -20,7 +20,7 @@ gh auth login -s codespace
 ```
 
 ```
-gh codespace ssh --repo ehdnd/spring-mvc-1-itemservice --server-port 2222
+gh codespace ssh --repo ehdnd/spring-crud --server-port 2222
 ```
 
 ### gateway
