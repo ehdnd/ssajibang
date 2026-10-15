@@ -47,6 +47,18 @@ LOG="$HOME/.cache/cf-forwarder.log"
 PIDFILE="$HOME/.cache/cf-forwarder.pid"
 AGENT_ENV="$HOME/.ssh/agent.env"
 
+# Cloudflare ICN 라우팅 패치
+#   무료 플랜 도메인(172.67.x.x)은 한국에서 LAX 로 가서 600~1000ms 지연이 생긴다.
+#   ICN 으로 가는 Cloudflare IP(172.66.x.x)를 hosts 에 박아 인천 엣지로 붙게 한다.
+#   끄기: ICN_PATCH=0 connect.sh   /  IP 바꾸기: CF_ICN_IP=172.66.x.x connect.sh
+ICN_PATCH="${ICN_PATCH:-1}"
+CF_ICN_IP="${CF_ICN_IP:-172.66.44.186}"
+CF_DOMAIN="11104002.xyz"
+CF_SUBS="ssh web code"
+HOSTS_FILE="${HOSTS_FILE:-/c/Windows/System32/drivers/etc/hosts}"
+HOSTS_BEGIN="# >>> ssajibang icn >>>"
+HOSTS_END="# <<< ssajibang icn <<<"
+
 export PATH="$HOME/bin:$PATH"
 
 log()  { printf '\033[32m[connect]\033[0m %s\n' "$1"; }
@@ -66,6 +78,56 @@ mac_ok() {
 # 윈도우 프로세스 실행 여부 (IMAGENAME 정확히 일치)
 proc_running() {
   tasklist //FI "IMAGENAME eq $1" //NH 2>/dev/null | grep -qiF "$1"
+}
+
+# hosts 에서 우리 블록과 도메인 관련 줄을 뺀 내용을 stdout 으로
+hosts_stripped() {
+  awk -v b="$HOSTS_BEGIN" -v e="$HOSTS_END" '
+    { line = $0; sub(/\r$/, "", line) }
+    line == b { skip = 1; next }
+    line == e { skip = 0; next }
+    skip { next }
+    { print }
+  ' "$HOSTS_FILE" | grep -viE "[[:space:]]([a-z0-9-]+\.)?${CF_DOMAIN//./\\.}([[:space:]]|$)"
+}
+
+# hosts 파일 덮어쓰기 — mv 대신 cat > 로 써서 원래 파일 권한(ACL)을 유지
+hosts_write() {
+  cat "$1" > "$HOSTS_FILE" 2>/dev/null
+}
+
+# 0: 변경함 / 1: 이미 적용됨 / 2: 쓰기 실패(관리자 권한 없음)
+icn_apply() {
+  local tmp="$HOME/.cache/hosts.new" s
+  mkdir -p "$HOME/.cache"
+  hosts_stripped > "$tmp"
+  # 마지막 줄에 개행이 없으면 붙여서 줄이 이어지지 않게
+  if [ -s "$tmp" ] && [ -n "$(tail -c1 "$tmp")" ]; then printf '\r\n' >> "$tmp"; fi
+  {
+    printf '%s\r\n' "$HOSTS_BEGIN"
+    for s in $CF_SUBS; do printf '%s %s.%s\r\n' "$CF_ICN_IP" "$s" "$CF_DOMAIN"; done
+    printf '%s\r\n' "$HOSTS_END"
+  } >> "$tmp"
+  if cmp -s "$tmp" "$HOSTS_FILE"; then rm -f "$tmp"; return 1; fi
+  if ! hosts_write "$tmp"; then rm -f "$tmp"; return 2; fi
+  rm -f "$tmp"
+  ipconfig //flushdns >/dev/null 2>&1 || true
+  return 0
+}
+
+# 패치 원복 (IP 가 죽었을 때 원래 DNS 로 돌아가기용)
+icn_revert() {
+  local tmp="$HOME/.cache/hosts.new"
+  hosts_stripped > "$tmp"
+  cmp -s "$tmp" "$HOSTS_FILE" || hosts_write "$tmp"
+  rm -f "$tmp"
+  ipconfig //flushdns >/dev/null 2>&1 || true
+}
+
+# 지금 SSH 호스트가 붙는 Cloudflare 데이터센터 (실패 시 빈 문자열)
+cf_colo() {
+  curl -s --max-time 5 "https://${SSH_HOST}/cdn-cgi/trace" 2>/dev/null \
+    | tr -d '\r' | sed -n 's/^colo=//p'
 }
 
 # ─────────────────────────────────────────────────────────────
@@ -108,10 +170,40 @@ case $? in
 esac
 
 # ─────────────────────────────────────────────────────────────
-# 2) 터널 — 살아있으면 재사용, 아니면 재구축
-#    재사용 조건: 포워더 PID 살아있음 + ssh 로 맥 응답
+# 1.5) Cloudflare ICN 라우팅 — hosts 패치 (터널보다 먼저)
+#    hosts 가 바뀌었으면 기존 포워더는 LAX 로 붙어 있으므로 강제 재구축
 # ─────────────────────────────────────────────────────────────
-if [ -f "$PIDFILE" ] \
+FORCE_REBUILD=0
+if [ "$ICN_PATCH" = 1 ]; then
+  icn_apply
+  case $? in
+    0) log "hosts 패치 적용 → ${CF_ICN_IP} (ICN)"; FORCE_REBUILD=1 ;;
+    1) log "hosts 패치 이미 적용됨" ;;
+    2) warn "hosts 수정 실패 — Git Bash 를 '관리자 권한으로 실행' 해야 합니다 (LAX 경유로 계속)" ;;
+  esac
+
+  COLO="$(cf_colo)"
+  if [ -z "$COLO" ]; then
+    # 지정 IP 가 응답 없음 → 막혔을 수 있으니 원복해서 기본 경로로라도 접속
+    warn "${CF_ICN_IP} 응답 없음 — hosts 패치를 원복하고 기본 경로로 접속합니다"
+    warn "  다른 IP 시도: nslookup lucajournal.pages.dev → CF_ICN_IP=<172.66.x.x> connect.sh"
+    icn_revert
+    FORCE_REBUILD=1
+  elif [ "$COLO" = ICN ]; then
+    log "Cloudflare 엣지: ICN"
+  else
+    warn "Cloudflare 엣지: ${COLO} (ICN 아님) — 지연이 클 수 있습니다"
+  fi
+else
+  log "ICN 패치 꺼짐 (ICN_PATCH=0)"
+fi
+
+# ─────────────────────────────────────────────────────────────
+# 2) 터널 — 살아있으면 재사용, 아니면 재구축
+#    재사용 조건: 강제 재구축 아님 + 포워더 PID 살아있음 + ssh 로 맥 응답
+# ─────────────────────────────────────────────────────────────
+if [ "$FORCE_REBUILD" = 0 ] \
+   && [ -f "$PIDFILE" ] \
    && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null \
    && mac_ok; then
   log "터널 재사용 — 이미 연결됨 (재구축 건너뜀)"
