@@ -17,9 +17,11 @@ curl -fsSL https://raw.githubusercontent.com/ehdnd/ssajibang/main/setup-ssh/setu
 - helper scripts
 - ssh key
 
-### bitwarden
+### links
 
 Bitwarden: https://vault.bitwarden.com/#/login
+
+Inflearn: https://www.inflearn.com/my/courses
 
 ### connect
 
