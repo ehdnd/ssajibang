@@ -12,6 +12,10 @@
 #     ... | bash -s -- vscode    # VS Code
 #     ... | bash -s -- both      # 둘 다
 #
+#   PowerToys(+ 설정 백업 .ptb) 설치 건너뛰기 — IDE 인자와 순서 무관:
+#     ... | bash -s -- --no-powertoys
+#     ... | bash -s -- vscode --no-powertoys
+#
 
 set -eu
 
@@ -50,18 +54,32 @@ win_build() {
 }
 
 # ─────────────────────────────────────────────────────────────
-# 설치할 IDE 선택 (connect.sh 와 동일: toolbox | vscode | both)
-#   나머지(cloudflared/PowerToys/ssh config/헬퍼)는 선택과 무관하게 항상 설치
+# 인자 파싱
+#   IDE 선택 (connect.sh 와 동일: toolbox | vscode | both)
+#   --no-powertoys : PowerToys 설치 + 설정 백업(.ptb) 다운로드 건너뜀
+#   나머지(cloudflared/ssh config/헬퍼)는 선택과 무관하게 항상 설치
 # ─────────────────────────────────────────────────────────────
-case "${1:-toolbox}" in
+USAGE="usage: setup.sh [toolbox|vscode|both] [--no-powertoys]"
+IDE_ARG=""
+SKIP_POWERTOYS=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --no-powertoys|--skip-powertoys|--no-pt) SKIP_POWERTOYS=1 ;;
+    -h|--help|help) echo "$USAGE"; exit 0 ;;
+    -*) die "알 수 없는 옵션: $arg  ($USAGE)" ;;
+    *)
+      [ -z "$IDE_ARG" ] || die "IDE 는 하나만 지정하세요: $IDE_ARG, $arg"
+      IDE_ARG="$arg" ;;
+  esac
+done
+
+case "${IDE_ARG:-toolbox}" in
   toolbox|tb)      IDE=toolbox ;;
   vscode|vs|code)  IDE=vscode  ;;
   both|all)        IDE=both    ;;
-  -h|--help|help)
-    echo "usage: setup.sh [toolbox|vscode|both]"
-    exit 0 ;;
   *)
-    die "알 수 없는 IDE: $1  (toolbox | vscode | both)" ;;
+    die "알 수 없는 IDE: $IDE_ARG  (toolbox | vscode | both)" ;;
 esac
 log "설치할 IDE: $IDE"
 
@@ -164,33 +182,41 @@ case "$IDE" in
 esac
 
 # ─────────────────────────────────────────────────────────────
-# 3) PowerToys  (빌드 19041 이상, 실패해도 계속)
+# 3) PowerToys  (빌드 19041 이상, 실패해도 계속 / --no-powertoys 면 통째로 건너뜀)
 # ─────────────────────────────────────────────────────────────
-BUILD="$(win_build)"
-if [ -n "$BUILD" ] && [ "$BUILD" -ge 19041 ] 2>/dev/null; then
-  log "PowerToys 최신 버전 확인 (Windows build $BUILD)"
-  PT_URL="$(curl -fsSL https://api.github.com/repos/microsoft/PowerToys/releases/latest 2>/dev/null \
-            | grep -o 'https://[^"]*PowerToysUserSetup-[^"]*-x64\.exe' | head -1)" || true
-  if [ -n "$PT_URL" ] && curl -fsSL -o pt.exe "$PT_URL"; then
-    if MSYS_NO_PATHCONV=1 ./pt.exe /install /quiet /norestart; then
-      log "PowerToys 완료"
+install_powertoys() {
+  BUILD="$(win_build)"
+  if [ -n "$BUILD" ] && [ "$BUILD" -ge 19041 ] 2>/dev/null; then
+    log "PowerToys 최신 버전 확인 (Windows build $BUILD)"
+    PT_URL="$(curl -fsSL https://api.github.com/repos/microsoft/PowerToys/releases/latest 2>/dev/null \
+              | grep -o 'https://[^"]*PowerToysUserSetup-[^"]*-x64\.exe' | head -1)" || true
+    if [ -n "$PT_URL" ] && curl -fsSL -o pt.exe "$PT_URL"; then
+      if MSYS_NO_PATHCONV=1 ./pt.exe /install /quiet /norestart; then
+        log "PowerToys 완료"
+      else
+        warn "PowerToys 설치 실패 — 건너뜀"
+      fi
     else
-      warn "PowerToys 설치 실패 — 건너뜀"
+      warn "PowerToys 다운로드 실패 — 건너뜀"
     fi
   else
-    warn "PowerToys 다운로드 실패 — 건너뜀"
+    warn "Windows build ${BUILD:-unknown} (19041 미만) — PowerToys 건너뜀"
   fi
-else
-  warn "Windows build ${BUILD:-unknown} (19041 미만) — PowerToys 건너뜀"
-fi
 
-# PowerToys 설정 백업 파일
-log "PowerToys 설정 백업 다운로드"
-mkdir -p "$PTB_DIR"
-if curl -fsSL -o "$PTB_DIR/$PTB_FILE" "${RAW_BASE}/${PTB_FILE}"; then
-  log "설정 백업: $PTB_DIR/$PTB_FILE"
+  # PowerToys 설정 백업 파일
+  log "PowerToys 설정 백업 다운로드"
+  mkdir -p "$PTB_DIR"
+  if curl -fsSL -o "$PTB_DIR/$PTB_FILE" "${RAW_BASE}/${PTB_FILE}"; then
+    log "설정 백업: $PTB_DIR/$PTB_FILE"
+  else
+    warn ".ptb 다운로드 실패 — repo 파일명 확인"
+  fi
+}
+
+if [ "$SKIP_POWERTOYS" = 1 ]; then
+  log "PowerToys + 설정 백업 건너뜀 (--no-powertoys)"
 else
-  warn ".ptb 다운로드 실패 — repo 파일명 확인"
+  install_powertoys
 fi
 
 # ─────────────────────────────────────────────────────────────

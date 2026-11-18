@@ -8,11 +8,17 @@
 curl -fsSL https://raw.githubusercontent.com/ehdnd/ssajibang/main/setup-ssh/setup.sh | bash -s -- toolbox 
 ```
 
+PowerToys(+ 설정 백업) 설치를 건너뛰려면 `--no-powertoys` 추가 (IDE 인자와 순서 무관):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ehdnd/ssajibang/main/setup-ssh/setup.sh | bash -s -- toolbox --no-powertoys
+```
+
 ### setup
 
 - cloudflare tunnel
 - jetbrains toolbox
-- powertoys
+- powertoys (`--no-powertoys` 로 건너뛰기)
 - ssh config
 - helper scripts
 - ssh key
