@@ -184,6 +184,26 @@ vscode_settings_apply() {
   esac
 }
 
+# Remote-SSH 확장이 없으면 설치 (Settings Sync 로그인 전에도 바로 접속할 수 있게)
+#   bin/code.cmd 는 cmd.exe 가 필요하므로 sh 스크립트인 bin/code 를 쓴다.
+vscode_ensure_remote_ssh() {
+  local cli
+  cli="$(dirname "$1")/bin/code"
+  if ls -d "$HOME/.vscode/extensions/ms-vscode-remote.remote-ssh-"[0-9]* >/dev/null 2>&1; then
+    return
+  fi
+  if [ ! -f "$cli" ]; then
+    warn "Remote-SSH 확장 없음 + code CLI 없음 ($cli) — VS Code 에서 수동 설치하세요"
+    return
+  fi
+  log "Remote-SSH 확장 설치"
+  if sh "$cli" --install-extension ms-vscode-remote.remote-ssh >/dev/null 2>&1; then
+    log "Remote-SSH 확장 완료"
+  else
+    warn "Remote-SSH 확장 설치 실패 — VS Code 에서 수동 설치하세요"
+  fi
+}
+
 # Cloudflare Access 로그인 — 성공 시 cloudflared 가 찍는 토큰(JWT)은 화면에서 지운다
 #   (공용 PC 화면·스크롤백에 남지 않게). 로그인 URL 등 나머지 출력은 그대로 보여준다.
 cf_login() {
@@ -424,6 +444,7 @@ launch_vscode() {
   fi
   # VS Code 는 settings.json 변경을 실행 중에도 반영하므로 항상 적용
   vscode_settings_apply
+  vscode_ensure_remote_ssh "$vs"
   if proc_running Code.exe; then
     log "VS Code 이미 실행 중"
   else

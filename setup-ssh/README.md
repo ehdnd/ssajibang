@@ -58,7 +58,9 @@ connect.sh none     # 터널만
 - Toolbox: 설정 → Advanced → SSH executable location = Git ssh
   (기본값이면 Windows 내장 OpenSSH 8.1 을 골라 agent 를 못 씀). Toolbox 가 꺼져 있을 때 적용
 - VS Code: `remote.SSH.path` = Git ssh, `remote.SSH.useLocalServer` = true
-  (기본 모드는 cmd.exe 로 ssh 를 실행하는데 싸지방은 cmd.exe 가 막혀 있음)
+  (기본 모드는 cmd.exe 로 ssh 를 실행하는데 싸지방은 cmd.exe 가 막혀 있음).
+  Remote-SSH 확장이 없으면 설치 — Settings Sync 로그인 전에도 바로 접속 가능
+  (`code.cmd` 대신 sh 스크립트 `bin/code` 사용: `.cmd` 는 cmd.exe 가 필요)
 
 설정 파일은 Git for Windows 에 포함된 perl 로 고친다. 확인: `perl -MJSON::PP -e1 && echo ok`
 

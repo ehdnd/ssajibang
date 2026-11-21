@@ -155,7 +155,9 @@ install_vscode() {
   #   $HOME/AppData/Local/Programs/Microsoft VS Code/Code.exe
   VSC_DIR="$HOME/AppData/Local/Programs/Microsoft VS Code"
   VSC_EXE="$VSC_DIR/Code.exe"
-  VSC_CLI="$VSC_DIR/bin/code.cmd"
+  # bin/code.cmd 는 cmd.exe 로만 실행되는데 싸지방은 cmd.exe 가 막혀 있다.
+  # bin/code (sh 스크립트)는 cygpath 로 경로를 바꿔 Code.exe 를 node 모드로 직접 실행한다.
+  VSC_CLI="$VSC_DIR/bin/code"
 
   log "VS Code 다운로드 (User Installer, x64)"
   if curl -fsSL -o vscode.exe \
@@ -175,7 +177,7 @@ install_vscode() {
       # Remote-SSH 확장 — connect.sh 로 바로 붙을 수 있게 미리 설치
       if [ -f "$VSC_CLI" ]; then
         log "Remote-SSH 확장 설치"
-        if MSYS_NO_PATHCONV=1 "$VSC_CLI" --install-extension ms-vscode-remote.remote-ssh --force >/dev/null 2>&1; then
+        if sh "$VSC_CLI" --install-extension ms-vscode-remote.remote-ssh --force >/dev/null 2>&1; then
           log "Remote-SSH 확장 완료"
         else
           warn "Remote-SSH 확장 설치 실패 — VS Code 에서 수동 설치하세요"
