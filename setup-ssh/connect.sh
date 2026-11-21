@@ -13,6 +13,15 @@
 #   → Toolbox 를 쓰는 중에 `connect.sh vscode` 를 실행해도 기존 세션이 끊기지 않는다.
 #   → 이미 실행 중인 앱은 다시 죽이지 않는다 (그냥 "이미 실행 중" 안내).
 #
+#   ssh-agent 는 환경변수 상속에 기대지 않는다:
+#     - agent 소켓을 ~/.ssh/agent.sock 으로 고정하고 ssh config 의 IdentityAgent 로 가리킨다
+#       → connect.sh 밖에서 뜬 Toolbox/jetbrainsd 가 띄운 ssh 도 agent 를 찾는다
+#     - Toolbox 의 SSH 실행 파일을 Git ssh 로 고정한다 (기본값이면 PATH 에서 찾다가
+#       Windows 내장 OpenSSH 8.1 을 골라 Git Bash 의 agent 를 못 쓰고 passphrase 를 묻는다)
+#     - VS Code Remote-SSH 는 Git ssh + local server 모드로 고정한다 (기본 모드는 cmd.exe 로
+#       ssh 를 실행하는데 싸지방은 cmd.exe 실행이 막혀 있다)
+#   설정 파일은 Git for Windows 에 포함된 perl(JSON::PP)로 고친다.
+#
 #   ※ Git Bash 전용.
 #
 set -u
@@ -45,7 +54,10 @@ VSCODE_USER="$HOME/AppData/Local/Programs/Microsoft VS Code/Code.exe"
 VSCODE_SYS="/c/Program Files/Microsoft VS Code/Code.exe"
 LOG="$HOME/.cache/cf-forwarder.log"
 PIDFILE="$HOME/.cache/cf-forwarder.pid"
-AGENT_ENV="$HOME/.ssh/agent.env"
+AGENT_SOCK="$HOME/.ssh/agent.sock"     # ssh-agent 소켓 (고정 경로, ssh config 의 IdentityAgent)
+AGENT_ENV="$HOME/.ssh/agent.env"       # agent PID 보관 (stop.sh 가 종료에 사용)
+TOOLBOX_SETTINGS="$HOME/AppData/Local/JetBrains/Toolbox/.settings.json"
+VSCODE_SETTINGS="$HOME/AppData/Roaming/Code/User/settings.json"
 
 # Cloudflare ICN 라우팅 패치
 #   무료 플랜 도메인(172.67.x.x)은 한국에서 LAX 로 가서 600~1000ms 지연이 생긴다.
@@ -61,12 +73,146 @@ HOSTS_END="# <<< ssajibang icn <<<"
 
 export PATH="$HOME/bin:$PATH"
 
+# Windows 프로그램(Toolbox, VS Code)과 ssh config 에 넘길 Windows 형식 경로
+#   AGENT_SOCK_WIN 은 SSH_AUTH_SOCK 과 IdentityAgent 에 '같은 문자열'로 쓴다
+#   (jetbrainsd 는 둘이 다르면 ssh-agent 설정 충돌로 처리한다)
+AGENT_SOCK_WIN="$(cygpath -m "$AGENT_SOCK")"     # C:/Users/<user>/.ssh/agent.sock
+GIT_SSH_WIN="$(cygpath -w "$GITBIN/ssh.exe")"   # C:\Program Files\Git\usr\bin\ssh.exe
+
 log()  { printf '\033[32m[connect]\033[0m %s\n' "$1"; }
 warn() { printf '\033[33m[connect] WARN:\033[0m %s\n' "$1" >&2; }
 die()  { printf '\033[31m[connect] ERROR:\033[0m %s\n' "$1" >&2; exit 1; }
 
 # Git 의 ssh.exe 를 쓰는 래퍼 (Toolbox/Gateway 와 동일 조건)
 gssh() { PATH="$GITBIN:$PATH" ssh "$@"; }
+
+# JSON 설정 파일의 키를 설정 (Git for Windows 에 포함된 perl + JSON::PP 사용)
+#   json_set FILE 'a/b/c:s=문자열' 'x.y:b=true' ...
+#     키 경로 구분자는 '/'  (VS Code 키의 '.' 은 키 이름의 일부로 취급)
+#     타입: s = 문자열, b = 불리언(true|false)
+#   종료코드: 0 변경함 / 1 이미 같음 / 2 실패 (perl·JSON::PP 없음, 엄격한 JSON 아님 등)
+#   파일이 없으면 새로 만든다. 주석·trailing comma 가 있는 파일은 건드리지 않는다(2).
+#   JSON_SET_DRYRUN=1 이면 파일은 건드리지 않고 판정만 한다.
+json_set() {
+  command -v perl >/dev/null 2>&1 || return 2
+  perl -MJSON::PP -e '
+    use strict; use warnings;
+    my $file = shift @ARGV;
+    # 엄격한 JSON 만 읽는다 — 주석·trailing comma 가 있으면 다시 쓸 때 사라지므로 손대지 않음
+    my $js = JSON::PP->new->utf8->allow_nonref->pretty->canonical;
+    my $data = {};
+    if (-s $file) {
+      open(my $in, "<:raw", $file) or exit 2;
+      my $txt = do { local $/; <$in> };
+      close $in;
+      $txt =~ s/^\xEF\xBB\xBF//;
+      $data = eval { $js->decode($txt) };
+      exit 2 unless ref $data eq "HASH";
+    }
+    my $changed = 0;
+    for my $arg (@ARGV) {
+      my ($lhs, $val) = split /=/, $arg, 2;
+      defined $val or exit 2;
+      my ($path, $type) = $lhs =~ /^(.+):([sb])$/ or exit 2;
+      my $new = $type eq "s" ? $val
+              : $val eq "true" ? JSON::PP::true : JSON::PP::false;
+      my @keys = split m{/}, $path;
+      my $last = pop @keys;
+      my $node = $data;
+      for my $k (@keys) {
+        $node->{$k} = {} unless ref $node->{$k} eq "HASH";
+        $node = $node->{$k};
+      }
+      my $old = exists $node->{$last} ? $js->encode($node->{$last}) : "";
+      next if $old eq $js->encode($new);
+      $node->{$last} = $new;
+      $changed = 1;
+    }
+    exit 1 unless $changed;
+    exit 0 if $ENV{JSON_SET_DRYRUN};
+    my $tmp = "$file.tmp$$";
+    open(my $out, ">:raw", $tmp) or exit 2;
+    print $out $js->encode($data);
+    close $out or do { unlink $tmp; exit 2 };
+    rename($tmp, $file) or do { unlink $tmp; exit 2 };
+    exit 0;
+  ' "$@"
+}
+
+# Toolbox 가 쓸 ssh 실행 파일 = Git ssh  (설정 → Advanced → SSH executable location)
+#   Toolbox 3.6+ 는 ssh 를 jetbrainsd 가 실행한다. 기본값(Default)이면 PATH 에서 ssh.exe 를
+#   찾으므로, connect.sh 밖에서 뜬 Toolbox(설치 직후 자동 실행, 시작 메뉴 등)는
+#   Windows 내장 OpenSSH 8.1 을 골라 Git Bash 의 agent 를 못 쓰고 passphrase 를 묻는다.
+toolbox_ssh_ok() {
+  JSON_SET_DRYRUN=1 json_set "$TOOLBOX_SETTINGS" \
+    "advanced/user_selected_ssh_executable/location:s=$GIT_SSH_WIN"
+  [ $? = 1 ]
+}
+
+# Toolbox 가 실행 중일 때 쓰면 Toolbox 가 덮어쓸 수 있으므로 꺼져 있을 때만 호출한다
+toolbox_ssh_apply() {
+  local ver
+  ver="$("$GITBIN/ssh.exe" -V 2>&1 | head -1 | tr -d '\r')"
+  mkdir -p "$(dirname "$TOOLBOX_SETTINGS")"
+  json_set "$TOOLBOX_SETTINGS" \
+    "advanced/user_selected_ssh_executable/type:s=OPENSSH" \
+    "advanced/user_selected_ssh_executable/version:s=$ver" \
+    "advanced/user_selected_ssh_executable/location:s=$GIT_SSH_WIN" \
+    "advanced/user_selected_ssh_executable/name:s=$GIT_SSH_WIN"
+  case $? in
+    0) log "Toolbox SSH 실행 파일 → $GIT_SSH_WIN" ;;
+    1) ;;  # 이미 설정됨
+    *) warn "Toolbox 설정 파일 수정 실패: $TOOLBOX_SETTINGS"
+       warn "  Toolbox 설정 → Advanced → SSH executable location 에서 직접 선택: $GIT_SSH_WIN" ;;
+  esac
+}
+
+# VS Code Remote-SSH = Git ssh + local server 모드
+#   기본 모드(useLocalServer=false)는 Windows 에서 cmd.exe 로 ssh 를 실행하는데
+#   (Remote-SSH 코드에 cmd.exe 가 고정) 싸지방은 cmd.exe 실행이 막혀 있어 타임아웃 난다.
+#   local server 모드는 node 가 ssh 를 직접 실행한다.
+vscode_settings_apply() {
+  mkdir -p "$(dirname "$VSCODE_SETTINGS")"
+  json_set "$VSCODE_SETTINGS" \
+    "remote.SSH.path:s=$GIT_SSH_WIN" \
+    "remote.SSH.useLocalServer:b=true"
+  case $? in
+    0) log "VS Code 설정 적용 (remote.SSH.path = Git ssh, remote.SSH.useLocalServer = true)" ;;
+    1) ;;  # 이미 설정됨
+    *) warn "VS Code settings.json 을 고치지 못함 (주석·trailing comma 등): $VSCODE_SETTINGS"
+       warn "  직접 추가: \"remote.SSH.path\": \"${GIT_SSH_WIN//\\/\\\\}\", \"remote.SSH.useLocalServer\": true" ;;
+  esac
+}
+
+# Remote-SSH 확장이 없으면 설치 (Settings Sync 로그인 전에도 바로 접속할 수 있게)
+#   bin/code.cmd 는 cmd.exe 가 필요하므로 sh 스크립트인 bin/code 를 쓴다.
+vscode_ensure_remote_ssh() {
+  local cli
+  cli="$(dirname "$1")/bin/code"
+  if ls -d "$HOME/.vscode/extensions/ms-vscode-remote.remote-ssh-"[0-9]* >/dev/null 2>&1; then
+    return
+  fi
+  if [ ! -f "$cli" ]; then
+    warn "Remote-SSH 확장 없음 + code CLI 없음 ($cli) — VS Code 에서 수동 설치하세요"
+    return
+  fi
+  log "Remote-SSH 확장 설치"
+  if sh "$cli" --install-extension ms-vscode-remote.remote-ssh >/dev/null 2>&1; then
+    log "Remote-SSH 확장 완료"
+  else
+    warn "Remote-SSH 확장 설치 실패 — VS Code 에서 수동 설치하세요"
+  fi
+}
+
+# Cloudflare Access 로그인 — 성공 시 cloudflared 가 찍는 토큰(JWT)은 화면에서 지운다
+#   (공용 PC 화면·스크롤백에 남지 않게). 로그인 URL 등 나머지 출력은 그대로 보여준다.
+cf_login() {
+  cloudflared.exe access login "https://${SSH_HOST}" 2>&1 \
+    | tr -d '\r' \
+    | sed -E -e '/^[A-Za-z0-9_-]{16,}(\.[A-Za-z0-9_-]*)*[[:space:]]*$/d' \
+             -e 's/^Successfully fetched your token:?.*/Access 토큰 확인됨 (토큰은 화면에 출력하지 않음)/'
+  return "${PIPESTATUS[0]}"
+}
 
 mac_ok() {
   gssh -o BatchMode=yes \
@@ -144,12 +290,21 @@ command -v cloudflared.exe >/dev/null 2>&1 \
 
 chmod 600 "$KEY" 2>/dev/null || true
 
-# ─────────────────────────────────────────────────────────────
-# 1) ssh-agent — 살아있으면 재사용
-# ─────────────────────────────────────────────────────────────
-if [ -f "$AGENT_ENV" ]; then
-  . "$AGENT_ENV" >/dev/null 2>&1 || true
+# ssh config 에 IdentityAgent 가 없으면 추가 (이전 setup.sh 로 만든 config 대비)
+#   → SSH_AUTH_SOCK 을 물려받지 못한 ssh 도 config 만 보고 agent 를 찾는다
+if ! grep -qi '^[[:space:]]*IdentityAgent' "$HOME/.ssh/config"; then
+  sed -i "/^[[:space:]]*IdentitiesOnly/a\\    IdentityAgent $AGENT_SOCK_WIN" "$HOME/.ssh/config"
+  if grep -qi '^[[:space:]]*IdentityAgent' "$HOME/.ssh/config"; then
+    log "ssh config 에 IdentityAgent 추가 ($AGENT_SOCK_WIN)"
+  else
+    warn "ssh config 에 IdentityAgent 를 넣지 못함 — setup.sh 를 다시 실행하세요"
+  fi
 fi
+
+# ─────────────────────────────────────────────────────────────
+# 1) ssh-agent — 고정 소켓(~/.ssh/agent.sock), 살아있으면 재사용
+# ─────────────────────────────────────────────────────────────
+export SSH_AUTH_SOCK="$AGENT_SOCK_WIN"
 
 ssh-add -l >/dev/null 2>&1
 case $? in
@@ -161,9 +316,11 @@ case $? in
     ssh-add "$KEY" || die "키 등록 실패 (passphrase 확인)"
     ;;
   *)
-    log "ssh-agent 시작"
-    ssh-agent -s > "$AGENT_ENV"
+    log "ssh-agent 시작 (소켓: $AGENT_SOCK)"
+    rm -f "$AGENT_SOCK"                       # 죽은 agent 가 남긴 소켓
+    ssh-agent -s -a "$AGENT_SOCK" > "$AGENT_ENV" || die "ssh-agent 시작 실패"
     . "$AGENT_ENV" >/dev/null
+    export SSH_AUTH_SOCK="$AGENT_SOCK_WIN"    # agent.env 의 POSIX 경로 대신 IdentityAgent 와 같은 형식
     log "키 등록 — passphrase 를 입력하세요"
     ssh-add "$KEY" || die "키 등록 실패 (passphrase 확인)"
     ;;
@@ -215,8 +372,7 @@ else
   # Cloudflare Access 인증  ★ 포워더보다 먼저 ★
   #   토큰이 캐시돼 있으면 즉시 통과, 없으면 브라우저가 열림
   log "Access 인증 확인 (필요 시 브라우저가 열립니다)"
-  cloudflared.exe access login "https://${SSH_HOST}" \
-    || die "Access 인증 실패 — 메일 OTP 를 확인하세요"
+  cf_login || die "Access 인증 실패 — 메일 OTP 를 확인하세요"
 
   # 포워더 — 끊기면 자동 재시작, 창 닫아도 유지
   mkdir -p "$(dirname "$LOG")"
@@ -259,9 +415,17 @@ launch_toolbox() {
     return
   fi
   if proc_running jetbrains-toolbox.exe; then
-    log "Toolbox 이미 실행 중"
+    if toolbox_ssh_ok; then
+      log "Toolbox 이미 실행 중 (SSH: Git ssh)"
+    else
+      warn "Toolbox 가 이미 실행 중인데 SSH 실행 파일이 Git ssh 가 아님 → passphrase 를 물을 수 있음"
+      warn "  stop.sh 후 connect.sh 를 다시 실행하거나,"
+      warn "  Toolbox 설정 → Advanced → SSH executable location → $GIT_SSH_WIN"
+    fi
   else
+    toolbox_ssh_apply
     log "Toolbox 실행"
+    # PATH·SSH_AUTH_SOCK 도 함께 넘긴다 (설정 파일 적용이 실패했을 때의 예비 경로)
     PATH="$GITBIN:$PATH" "$TOOLBOX" >/dev/null 2>&1 &
     disown 2>/dev/null || true
   fi
@@ -278,6 +442,9 @@ launch_vscode() {
     warn "  $VSCODE_SYS"
     return
   fi
+  # VS Code 는 settings.json 변경을 실행 중에도 반영하므로 항상 적용
+  vscode_settings_apply
+  vscode_ensure_remote_ssh "$vs"
   if proc_running Code.exe; then
     log "VS Code 이미 실행 중"
   else
