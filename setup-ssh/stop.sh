@@ -10,6 +10,7 @@ KEY="$HOME/.ssh/id_ed25519_mac"
 LOG="$HOME/.cache/cf-forwarder.log"
 PIDFILE="$HOME/.cache/cf-forwarder.pid"
 AGENT_ENV="$HOME/.ssh/agent.env"
+AGENT_SOCK="$HOME/.ssh/agent.sock"     # connect.sh 의 고정 agent 소켓
 
 # connect.sh 의 ICN hosts 패치와 동일한 값
 CF_DOMAIN="11104002.xyz"
@@ -64,6 +65,7 @@ if [ -f "$AGENT_ENV" ]; then
   ssh-agent -k >/dev/null 2>&1 || true
   rm -f "$AGENT_ENV"
 fi
+rm -f "$AGENT_SOCK"
 
 log "프로세스 종료 완료"
 

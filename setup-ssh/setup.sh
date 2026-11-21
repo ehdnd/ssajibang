@@ -30,7 +30,8 @@ KEY="$HOME/.ssh/id_ed25519_mac"
 GH_OWNER="ehdnd"
 GH_REPO="ssajibang"
 GH_SUBDIR="setup-ssh"
-RAW_BASE="https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/main/${GH_SUBDIR}"
+GH_REF="${SSAJIBANG_REF:-main}"   # 브랜치 테스트: SSAJIBANG_REF=<branch> 로 헬퍼 스크립트도 그 브랜치에서 받음
+RAW_BASE="https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/${GH_REF}/${GH_SUBDIR}"
 
 PTB_FILE="settings_134282238737369559.ptb"
 PTB_DIR="$HOME/Documents/PowerToys/Backup"
@@ -119,6 +120,20 @@ export PATH="$BIN_DIR:$PATH"
 # ─────────────────────────────────────────────────────────────
 # 2) IDE  (IDE 값에 따라 toolbox / vscode / 둘 다 — 실패해도 계속)
 # ─────────────────────────────────────────────────────────────
+# 인스톨러가 설치 직후 Toolbox 를 띄우는 경우가 있다. 이 인스턴스는 ssh-agent 도
+# SSH 실행 파일 설정(connect.sh 가 적용)도 없는 상태라, 그대로 두면 connect.sh 가
+# "이미 실행 중" 으로 넘어가고 원격 접속 시 passphrase 를 묻는다 → 종료해 둔다.
+stop_autostarted_toolbox() {
+  for _ in $(seq 1 10); do
+    if tasklist //FI "IMAGENAME eq jetbrains-toolbox.exe" //NH 2>/dev/null | grep -qiF jetbrains-toolbox.exe; then
+      log "설치 직후 자동 실행된 Toolbox 종료 (connect.sh 가 설정 적용 후 다시 띄움)"
+      taskkill //F //IM jetbrains-toolbox.exe //IM jetbrainsd.exe >/dev/null 2>&1 || true
+      return
+    fi
+    sleep 1
+  done
+}
+
 install_toolbox() {
   log "JetBrains Toolbox 다운로드"
   if curl -fsSL -o toolbox.exe \
@@ -126,6 +141,7 @@ install_toolbox() {
     log "Toolbox 설치 (조용히 진행, 1~2분)"
     if MSYS_NO_PATHCONV=1 ./toolbox.exe /S; then
       log "Toolbox 완료"
+      stop_autostarted_toolbox
     else
       warn "Toolbox 설치 실패 — 수동 설치 필요: https://www.jetbrains.com/toolbox-app/"
     fi
@@ -226,6 +242,11 @@ log "ssh config 생성"
 mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
 
+# IdentityAgent: connect.sh 가 ssh-agent 를 이 고정 소켓으로 띄운다.
+#   SSH_AUTH_SOCK 을 물려받지 못한 ssh(Toolbox/jetbrainsd 가 띄운 것 등)도 agent 를 찾게 한다.
+#   connect.sh 의 SSH_AUTH_SOCK 과 같은 문자열(C:/... 형식)이어야 한다.
+AGENT_SOCK_WIN="$(cygpath -m "$HOME/.ssh/agent.sock")"
+
 cat > "$HOME/.ssh/config" << EOF
 Host mac
     HostName 127.0.0.1
@@ -233,6 +254,7 @@ Host mac
     User ${MAC_USER}
     IdentityFile ~/.ssh/id_ed25519_mac
     IdentitiesOnly yes
+    IdentityAgent ${AGENT_SOCK_WIN}
     ServerAliveInterval 60
     ServerAliveCountMax 3
 EOF
