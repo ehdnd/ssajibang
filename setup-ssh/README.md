@@ -5,16 +5,12 @@
 ### git bash
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ehdnd/ssajibang/main/setup-ssh/setup.sh | bash -s -- toolbox 
+curl -fsSL https://raw.githubusercontent.com/ehdnd/ssajibang/main/setup-ssh/setup.sh | bash -s -- toolbox
+curl -fsSL https://raw.githubusercontent.com/ehdnd/ssajibang/main/setup-ssh/setup.sh | bash -s -- herdr
+curl -fsSL https://raw.githubusercontent.com/ehdnd/ssajibang/main/setup-ssh/setup.sh | bash -s -- vscode herdr pt
 ```
 
-PowerToys(+ 설정 백업) 설치를 건너뛰려면 `--no-powertoys` 추가 (IDE 인자와 순서 무관):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ehdnd/ssajibang/main/setup-ssh/setup.sh | bash -s -- toolbox --no-powertoys
-```
-
-브랜치 테스트 (헬퍼 스크립트도 그 브랜치에서 받음):
+브랜치 테스트 (헬퍼 스크립트·wezterm.lua 도 그 브랜치에서 받음):
 
 ```bash
 B=<branch>; curl -fsSL "https://raw.githubusercontent.com/ehdnd/ssajibang/$B/setup-ssh/setup.sh" | SSAJIBANG_REF="$B" bash -s -- toolbox
@@ -22,12 +18,20 @@ B=<branch>; curl -fsSL "https://raw.githubusercontent.com/ehdnd/ssajibang/$B/set
 
 ### setup
 
-- cloudflare tunnel
-- jetbrains toolbox
-- powertoys (`--no-powertoys` 로 건너뛰기)
-- ssh config
-- helper scripts
-- ssh key
+항상 설치: cloudflared · ssh config · helper scripts(connect.sh, stop.sh) · ssh key 안내
+
+구성요소 — 여러 개, 순서 무관. connect.sh 와 같은 이름:
+
+| 인자 | 설치 |
+|---|---|
+| (없음) / `none` | 항상 설치 항목만 |
+| `toolbox` | JetBrains Toolbox |
+| `vscode` | VS Code + Remote-SSH 확장 |
+| `herdr` | WezTerm(zip, `~/bin/wezterm`) + `~/.wezterm.lua` |
+| `pt` / `powertoys` | PowerToys + 설정 백업(.ptb) |
+
+다시 실행하면 WezTerm 은 이미 있으면 건너뛰고, `~/.wezterm.lua` 는 내용이 다르면 `.bak` 으로 백업 후 덮어쓴다.
+WezTerm 은 안정판으로 고정 — 다른 버전: `WEZTERM_VERSION=nightly` 를 `bash` 앞에 붙인다.
 
 ### links
 
@@ -40,14 +44,29 @@ Inflearn: https://www.inflearn.com/my/courses
 새 Git Bash 창에서:
 
 ```bash
-connect.sh          # Toolbox (기본)
-connect.sh vscode   # VS Code
-connect.sh both     # 둘 다
-connect.sh none     # 터널만
+connect.sh                # 터널만 (= none)
+connect.sh toolbox        # Toolbox
+connect.sh vscode         # VS Code
+connect.sh herdr          # WezTerm 새 창 → 맥의 herdr
+connect.sh vscode herdr   # 여러 개 함께
 ```
 
 터널이 이미 살아 있으면 재사용한다 — Toolbox 사용 중에 `connect.sh vscode` 를
-실행해도 기존 세션은 끊기지 않는다. 이미 실행 중인 앱은 다시 띄우지 않는다.
+실행해도 기존 세션은 끊기지 않는다. 이미 실행 중인 Toolbox · VS Code 는 다시 띄우지 않는다.
+
+#### herdr
+
+맥에 한 번: `brew install herdr`
+
+- `connect.sh herdr` → WezTerm 새 창에서 `ssh mac` → herdr (WezTerm 이 떠 있어도 항상 새 창)
+- 분리: `ctrl+b q` — 창이 닫히고 herdr 는 맥에서 계속 돈다
+- 다시 접속: WezTerm 에서 `Ctrl+Shift+H` (새 탭) 또는 `connect.sh herdr`
+- `Ctrl+Shift+T`: Git Bash 탭
+- 창에 `command not found: herdr` → 맥에 herdr 가 없음
+- `ctrl+b` 다음 키는 영문 입력 상태로 (한글이면 `ㅂ` 이 들어감)
+
+Git ssh 로 붙는다 — Windows 내장 OpenSSH 8.1 은 고정 agent 소켓을 못 쓴다.
+비대화형 ssh 는 맥의 brew PATH 를 못 읽어서 로그인 셸로 감싸 실행한다 (`exec $SHELL -lic herdr`).
 
 #### passphrase 는 connect.sh 에서 한 번만
 
@@ -64,7 +83,7 @@ connect.sh none     # 터널만
 
 설정 파일은 Git for Windows 에 포함된 perl 로 고친다. 확인: `perl -MJSON::PP -e1 && echo ok`
 
-Toolbox 가 그래도 passphrase 를 물으면 `stop.sh` → `connect.sh` (Toolbox 를 새로 띄우며 설정 적용).
+Toolbox 가 그래도 passphrase 를 물으면 `stop.sh` → `connect.sh toolbox` (Toolbox 를 새로 띄우며 설정 적용).
 
 #### ICN 라우팅 (hosts 패치)
 
@@ -107,5 +126,5 @@ taskkill //F //IM jetbrains-toolbox.exe //IM jetbrainsd.exe
 
 뭐가 떠 있는지 확인:
 ```
-tasklist //NH | grep -iE 'Code.exe|jetbrains|cloudflared'
+tasklist //NH | grep -iE 'Code.exe|jetbrains|cloudflared|wezterm'
 ```

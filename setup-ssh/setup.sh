@@ -1,20 +1,24 @@
 #!/usr/bin/env bash
 #
 # 싸지방 초기 세팅 — 새 PC에서 한 번만 실행
-#   cloudflared / IDE(JetBrains Toolbox | VS Code) / PowerToys / ssh config / 헬퍼 스크립트
 #
 # 사전조건: Git for Windows 설치 완료 (Git Bash에서 실행)
 #
-#   curl -fsSL https://raw.githubusercontent.com/ehdnd/ssajibang/main/setup-ssh/setup.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/ehdnd/ssajibang/main/setup-ssh/setup.sh | bash -s -- [구성요소...]
 #
-#   설치할 IDE 선택 (기본: toolbox) — connect.sh 와 동일한 이름:
-#     ... | bash -s -- toolbox   # JetBrains Toolbox (기본)
-#     ... | bash -s -- vscode    # VS Code
-#     ... | bash -s -- both      # 둘 다
+#   항상 설치: cloudflared · ssh config · 헬퍼 스크립트(connect.sh, stop.sh) · 개인키 안내
 #
-#   PowerToys(+ 설정 백업 .ptb) 설치 건너뛰기 — IDE 인자와 순서 무관:
-#     ... | bash -s -- --no-powertoys
-#     ... | bash -s -- vscode --no-powertoys
+#   구성요소 — 여러 개, 순서 무관. connect.sh 와 같은 이름:
+#     toolbox       JetBrains Toolbox
+#     vscode        VS Code + Remote-SSH 확장
+#     herdr         WezTerm(zip) + ~/.wezterm.lua   (herdr 자체는 맥에: brew install herdr)
+#     pt|powertoys  PowerToys + 설정 백업(.ptb)
+#     none          항상 설치 항목만 (인자 없음과 같음. 다른 구성요소와 함께 오면 무시)
+#
+#   예)  ... | bash -s -- vscode herdr
+#        ... | bash -s -- toolbox pt
+#
+#   WezTerm 은 안정판으로 고정. 다른 버전: WEZTERM_VERSION=<태그|nightly>
 #
 
 set -eu
@@ -37,7 +41,20 @@ PTB_FILE="settings_134282238737369559.ptb"
 PTB_DIR="$HOME/Documents/PowerToys/Backup"
 
 BIN_DIR="$HOME/bin"
+
+# WezTerm — zip 을 풀기만 하는 포터블 설치 (관리자 권한 불필요). connect.sh 가 같은 경로를 쓴다.
+WEZTERM_VERSION="${WEZTERM_VERSION:-20240203-110809-5046fc22}"   # 안정판 (매 PC 같은 버전)
+WEZTERM_DIR="$BIN_DIR/wezterm"
+WEZTERM_CONF="$HOME/.wezterm.lua"
+
 TMP="$(mktemp -d)"
+
+USAGE="usage: setup.sh [toolbox] [vscode] [herdr] [pt]   (인자 없음 = none: 항상 설치 항목만)"
+
+WANT_TOOLBOX=0
+WANT_VSCODE=0
+WANT_HERDR=0
+WANT_PT=0
 
 # ─────────────────────────────────────────────────────────────
 # 헬퍼
@@ -54,71 +71,114 @@ win_build() {
     | grep -oE '[0-9]{4,}' | tail -1
 }
 
-# ─────────────────────────────────────────────────────────────
-# 인자 파싱
-#   IDE 선택 (connect.sh 와 동일: toolbox | vscode | both)
-#   --no-powertoys : PowerToys 설치 + 설정 백업(.ptb) 다운로드 건너뜀
-#   나머지(cloudflared/ssh config/헬퍼)는 선택과 무관하게 항상 설치
-# ─────────────────────────────────────────────────────────────
-USAGE="usage: setup.sh [toolbox|vscode|both] [--no-powertoys]"
-IDE_ARG=""
-SKIP_POWERTOYS=0
+# 고른 구성요소 목록 (표시용)
+selected() {
+  local s=""
+  if [ "$WANT_TOOLBOX" = 1 ]; then s="$s toolbox"; fi
+  if [ "$WANT_VSCODE"  = 1 ]; then s="$s vscode";  fi
+  if [ "$WANT_HERDR"   = 1 ]; then s="$s herdr";   fi
+  if [ "$WANT_PT"      = 1 ]; then s="$s pt";      fi
+  echo "${s# }"
+}
 
-for arg in "$@"; do
-  case "$arg" in
-    --no-powertoys|--skip-powertoys|--no-pt) SKIP_POWERTOYS=1 ;;
-    -h|--help|help) echo "$USAGE"; exit 0 ;;
-    -*) die "알 수 없는 옵션: $arg  ($USAGE)" ;;
-    *)
-      [ -z "$IDE_ARG" ] || die "IDE 는 하나만 지정하세요: $IDE_ARG, $arg"
-      IDE_ARG="$arg" ;;
+# ─────────────────────────────────────────────────────────────
+# 인자 파싱 — 구성요소 목록 (여러 개, 순서 무관)
+# ─────────────────────────────────────────────────────────────
+parse_args() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      toolbox)        WANT_TOOLBOX=1 ;;
+      vscode)         WANT_VSCODE=1  ;;
+      herdr)          WANT_HERDR=1   ;;
+      pt|powertoys)   WANT_PT=1      ;;
+      none)           ;;   # 항상 설치 항목만 — 다른 구성요소와 함께 오면 무시
+      -h|--help|help) echo "$USAGE"; exit 0 ;;
+      *)              die "알 수 없는 구성요소: $arg  ($USAGE)" ;;
+    esac
+  done
+}
+
+# ─────────────────────────────────────────────────────────────
+# cloudflared  (필수 — 실패 시 중단)
+# ─────────────────────────────────────────────────────────────
+install_cloudflared() {
+  local arch url
+  case "${PROCESSOR_ARCHITECTURE:-AMD64}" in
+    x86|X86) arch="386"   ;;
+    *)       arch="amd64" ;;
   esac
-done
 
-case "${IDE_ARG:-toolbox}" in
-  toolbox|tb)      IDE=toolbox ;;
-  vscode|vs|code)  IDE=vscode  ;;
-  both|all)        IDE=both    ;;
-  *)
-    die "알 수 없는 IDE: $IDE_ARG  (toolbox | vscode | both)" ;;
-esac
-log "설치할 IDE: $IDE"
+  log "cloudflared 최신 릴리스 확인 (arch: ${arch})"
+  url="$(curl -fsSL https://api.github.com/repos/cloudflare/cloudflared/releases/latest 2>/dev/null \
+         | grep -o "https://[^\"]*cloudflared-windows-${arch}\.exe" | head -1)" || true
 
-mkdir -p "$BIN_DIR"
-cd "$TMP"
+  # API 레이트리밋 대비 — 고정 latest 경로로 폴백
+  if [ -z "$url" ]; then
+    warn "GitHub API 실패 (레이트리밋?) — latest/download 경로로 폴백"
+    url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-${arch}.exe"
+  fi
 
-# ─────────────────────────────────────────────────────────────
-# 1) cloudflared  (필수 — 실패 시 중단)
-# ─────────────────────────────────────────────────────────────
-case "${PROCESSOR_ARCHITECTURE:-AMD64}" in
-  x86|X86) CF_ARCH="386"   ;;
-  *)       CF_ARCH="amd64" ;;
-esac
+  log "cloudflared 다운로드"
+  curl -fsSL -o "$BIN_DIR/cloudflared.exe" "$url" || die "cloudflared 다운로드 실패"
+  chmod +x "$BIN_DIR/cloudflared.exe"
+  "$BIN_DIR/cloudflared.exe" --version >/dev/null 2>&1 || die "cloudflared 실행 불가"
+  log "cloudflared 완료: $("$BIN_DIR/cloudflared.exe" --version 2>&1 | head -1)"
 
-log "cloudflared 최신 릴리스 확인 (arch: ${CF_ARCH})"
-CF_URL="$(curl -fsSL https://api.github.com/repos/cloudflare/cloudflared/releases/latest 2>/dev/null \
-          | grep -o "https://[^\"]*cloudflared-windows-${CF_ARCH}\.exe" | head -1)" || true
-
-# API 레이트리밋 대비 — 고정 latest 경로로 폴백
-if [ -z "$CF_URL" ]; then
-  warn "GitHub API 실패 (레이트리밋?) — latest/download 경로로 폴백"
-  CF_URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-${CF_ARCH}.exe"
-fi
-
-log "cloudflared 다운로드"
-curl -fsSL -o "$BIN_DIR/cloudflared.exe" "$CF_URL" || die "cloudflared 다운로드 실패"
-chmod +x "$BIN_DIR/cloudflared.exe"
-"$BIN_DIR/cloudflared.exe" --version >/dev/null 2>&1 || die "cloudflared 실행 불가"
-log "cloudflared 완료: $("$BIN_DIR/cloudflared.exe" --version 2>&1 | head -1)"
-
-# PATH 등록
-if ! grep -q 'HOME/bin' "$HOME/.bashrc" 2>/dev/null; then
-  echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"
-fi
-export PATH="$BIN_DIR:$PATH"
+  # PATH 등록
+  if ! grep -q 'HOME/bin' "$HOME/.bashrc" 2>/dev/null; then
+    echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"
+  fi
+  export PATH="$BIN_DIR:$PATH"
+}
 
 # ─────────────────────────────────────────────────────────────
-# 2) IDE  (IDE 값에 따라 toolbox / vscode / 둘 다 — 실패해도 계속)
+# ssh config  (필수)
+# ─────────────────────────────────────────────────────────────
+write_ssh_config() {
+  local agent_sock_win
+  log "ssh config 생성"
+  mkdir -p "$HOME/.ssh"
+  chmod 700 "$HOME/.ssh"
+
+  # IdentityAgent: connect.sh 가 ssh-agent 를 이 고정 소켓으로 띄운다.
+  #   SSH_AUTH_SOCK 을 물려받지 못한 ssh(Toolbox/jetbrainsd 가 띄운 것 등)도 agent 를 찾게 한다.
+  #   connect.sh 의 SSH_AUTH_SOCK 과 같은 문자열(C:/... 형식)이어야 한다.
+  agent_sock_win="$(cygpath -m "$HOME/.ssh/agent.sock")"
+
+  cat > "$HOME/.ssh/config" << EOF
+Host mac
+    HostName 127.0.0.1
+    Port ${LOCAL_PORT}
+    User ${MAC_USER}
+    IdentityFile ~/.ssh/id_ed25519_mac
+    IdentitiesOnly yes
+    IdentityAgent ${agent_sock_win}
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
+EOF
+  chmod 600 "$HOME/.ssh/config"
+  log "ssh config 완료: ~/.ssh/config"
+}
+
+# ─────────────────────────────────────────────────────────────
+# 헬퍼 스크립트  (필수)
+# ─────────────────────────────────────────────────────────────
+install_helpers() {
+  local s
+  log "헬퍼 스크립트 다운로드"
+  for s in connect.sh stop.sh; do
+    if curl -fsSL -o "$BIN_DIR/$s" "${RAW_BASE}/${s}"; then
+      chmod +x "$BIN_DIR/$s"
+      log "  $BIN_DIR/$s"
+    else
+      warn "$s 다운로드 실패"
+    fi
+  done
+}
+
+# ─────────────────────────────────────────────────────────────
+# toolbox  (선택 — 실패해도 계속)
 # ─────────────────────────────────────────────────────────────
 # 인스톨러가 설치 직후 Toolbox 를 띄우는 경우가 있다. 이 인스턴스는 ssh-agent 도
 # SSH 실행 파일 설정(connect.sh 가 적용)도 없는 상태라, 그대로 두면 connect.sh 가
@@ -150,6 +210,9 @@ install_toolbox() {
   fi
 }
 
+# ─────────────────────────────────────────────────────────────
+# vscode  (선택 — 실패해도 계속)
+# ─────────────────────────────────────────────────────────────
 install_vscode() {
   # User Installer — 관리자 권한 불필요. connect.sh 가 찾는 경로(VSCODE_USER)에 설치됨:
   #   $HOME/AppData/Local/Programs/Microsoft VS Code/Code.exe
@@ -193,14 +256,81 @@ install_vscode() {
   fi
 }
 
-case "$IDE" in
-  toolbox) install_toolbox ;;
-  vscode)  install_vscode  ;;
-  both)    install_toolbox; install_vscode ;;
-esac
+# ─────────────────────────────────────────────────────────────
+# herdr  (선택 — 실패해도 계속)
+#   싸지방 쪽은 터미널(WezTerm)과 설정만 깐다. herdr 는 맥에서 돈다 (맥: brew install herdr).
+#   WezTerm 은 이미 있으면 건너뛰고, ~/.wezterm.lua 는 내용이 다르면 .bak 으로 백업 후 덮어쓴다.
+# ─────────────────────────────────────────────────────────────
+
+# zip 압축 해제 — Git Bash 에는 unzip 이 없을 수 있어 Windows 내장 tar.exe(bsdtar)를 먼저 쓴다
+unzip_to() {
+  local zip="$1" dest="$2"
+  if [ -f /c/Windows/System32/tar.exe ] \
+     && /c/Windows/System32/tar.exe -xf "$zip" -C "$dest" 2>/dev/null; then
+    return 0
+  fi
+  if command -v unzip >/dev/null 2>&1 && unzip -q "$zip" -d "$dest"; then
+    return 0
+  fi
+  return 1
+}
+
+install_wezterm() {
+  local url exe
+
+  if [ -f "$WEZTERM_DIR/wezterm-gui.exe" ]; then
+    log "WezTerm 이미 설치됨 — 건너뜀 ($WEZTERM_DIR)"
+  else
+    url="https://github.com/wezterm/wezterm/releases/download/${WEZTERM_VERSION}/WezTerm-windows-${WEZTERM_VERSION}.zip"
+    log "WezTerm 다운로드 (${WEZTERM_VERSION})"
+    if ! curl -fsSL -o wezterm.zip "$url"; then
+      warn "WezTerm 다운로드 실패 — 건너뜀: $url"
+      return 0
+    fi
+
+    log "WezTerm 압축 해제 → $WEZTERM_DIR"
+    mkdir -p wezterm-unzip
+    if ! unzip_to wezterm.zip wezterm-unzip; then
+      warn "WezTerm 압축 해제 실패 (tar.exe/unzip 없음) — 직접 풀어서 $WEZTERM_DIR 에 두세요"
+      return 0
+    fi
+
+    # zip 안의 버전 폴더(WezTerm-windows-<버전>/)를 벗겨 경로를 고정한다
+    exe="$(find wezterm-unzip -name wezterm-gui.exe | head -1)"
+    if [ -z "$exe" ]; then
+      warn "zip 안에 wezterm-gui.exe 가 없음 — 건너뜀"
+      return 0
+    fi
+    rm -rf "$WEZTERM_DIR"
+    if ! mv "$(dirname "$exe")" "$WEZTERM_DIR"; then
+      warn "WezTerm 을 $WEZTERM_DIR 로 옮기지 못함 — 건너뜀"
+      return 0
+    fi
+    log "WezTerm 완료: $WEZTERM_DIR/wezterm-gui.exe"
+  fi
+
+  log "WezTerm 설정 다운로드 → ~/.wezterm.lua"
+  if ! curl -fsSL -o wezterm.lua "${RAW_BASE}/wezterm.lua"; then
+    warn "wezterm.lua 다운로드 실패 — 건너뜀"
+    return 0
+  fi
+  if [ -f "$WEZTERM_CONF" ]; then
+    if cmp -s wezterm.lua "$WEZTERM_CONF"; then
+      log "~/.wezterm.lua 이미 최신"
+      return 0
+    fi
+    cp "$WEZTERM_CONF" "$WEZTERM_CONF.bak" || { warn "기존 설정 백업 실패 — 덮어쓰지 않음"; return 0; }
+    log "기존 설정 백업: ~/.wezterm.lua.bak"
+  fi
+  if cp wezterm.lua "$WEZTERM_CONF"; then
+    log "WezTerm 설정 완료: ~/.wezterm.lua"
+  else
+    warn "~/.wezterm.lua 쓰기 실패"
+  fi
+}
 
 # ─────────────────────────────────────────────────────────────
-# 3) PowerToys  (빌드 19041 이상, 실패해도 계속 / --no-powertoys 면 통째로 건너뜀)
+# pt  (선택 — 빌드 19041 이상, 실패해도 계속)
 # ─────────────────────────────────────────────────────────────
 install_powertoys() {
   BUILD="$(win_build)"
@@ -231,66 +361,22 @@ install_powertoys() {
   fi
 }
 
-if [ "$SKIP_POWERTOYS" = 1 ]; then
-  log "PowerToys + 설정 백업 건너뜀 (--no-powertoys)"
-else
-  install_powertoys
-fi
-
 # ─────────────────────────────────────────────────────────────
-# 4) ssh config
+# 개인키 안내  (필수 — 브라우저 + 수동 작업이라 마지막)
 # ─────────────────────────────────────────────────────────────
-log "ssh config 생성"
-mkdir -p "$HOME/.ssh"
-chmod 700 "$HOME/.ssh"
-
-# IdentityAgent: connect.sh 가 ssh-agent 를 이 고정 소켓으로 띄운다.
-#   SSH_AUTH_SOCK 을 물려받지 못한 ssh(Toolbox/jetbrainsd 가 띄운 것 등)도 agent 를 찾게 한다.
-#   connect.sh 의 SSH_AUTH_SOCK 과 같은 문자열(C:/... 형식)이어야 한다.
-AGENT_SOCK_WIN="$(cygpath -m "$HOME/.ssh/agent.sock")"
-
-cat > "$HOME/.ssh/config" << EOF
-Host mac
-    HostName 127.0.0.1
-    Port ${LOCAL_PORT}
-    User ${MAC_USER}
-    IdentityFile ~/.ssh/id_ed25519_mac
-    IdentitiesOnly yes
-    IdentityAgent ${AGENT_SOCK_WIN}
-    ServerAliveInterval 60
-    ServerAliveCountMax 3
-EOF
-chmod 600 "$HOME/.ssh/config"
-log "ssh config 완료: ~/.ssh/config"
-
-# ─────────────────────────────────────────────────────────────
-# 5) 헬퍼 스크립트
-# ─────────────────────────────────────────────────────────────
-log "헬퍼 스크립트 다운로드"
-for s in connect.sh stop.sh; do
-  if curl -fsSL -o "$BIN_DIR/$s" "${RAW_BASE}/${s}"; then
-    chmod +x "$BIN_DIR/$s"
-    log "  $BIN_DIR/$s"
+guide_private_key() {
+  echo
+  echo "════════════════════════════════════════════════════════════"
+  if [ -f "$KEY" ]; then
+    chmod 600 "$KEY"
+    log "개인키가 이미 있습니다 — 건너뜀"
   else
-    warn "$s 다운로드 실패"
-  fi
-done
+    BW_URL="https://vault.bitwarden.com/#/login"
+    log "Bitwarden 로그인 페이지를 브라우저로 엽니다: $BW_URL"
+    # explorer.exe 는 성공해도 exit 1 을 반환하므로 종료코드는 무시
+    MSYS_NO_PATHCONV=1 explorer.exe "$BW_URL" 2>/dev/null || true
 
-# ─────────────────────────────────────────────────────────────
-# 6) 개인키 안내
-# ─────────────────────────────────────────────────────────────
-echo
-echo "════════════════════════════════════════════════════════════"
-if [ -f "$KEY" ]; then
-  chmod 600 "$KEY"
-  log "개인키가 이미 있습니다 — 건너뜀"
-else
-  BW_URL="https://vault.bitwarden.com/#/login"
-  log "Bitwarden 로그인 페이지를 브라우저로 엽니다: $BW_URL"
-  # explorer.exe 는 성공해도 exit 1 을 반환하므로 종료코드는 무시
-  MSYS_NO_PATHCONV=1 explorer.exe "$BW_URL" 2>/dev/null || true
-
-  cat << 'GUIDE'
+    cat << 'GUIDE'
   다음은 수동입니다 — 개인키 배치
 
   1) 열린 브라우저에서 Bitwarden 로그인 → 개인키 전체 복사
@@ -310,18 +396,69 @@ else
          sed -i 's/\r$//' ~/.ssh/id_ed25519_mac
        후 다시 검증. 그래도 안 되면 1)부터 다시.
 GUIDE
-fi
-echo "════════════════════════════════════════════════════════════"
-echo
-log "세팅 완료 (IDE: $IDE). 새 Git Bash 창을 연 뒤 접속하려면:"
-echo
-case "$IDE" in
-  toolbox) echo "    connect.sh          # Toolbox" ;;
-  vscode)  echo "    connect.sh vscode   # VS Code" ;;
-  both)
-    echo "    connect.sh          # Toolbox (기본)"
-    echo "    connect.sh vscode   # VS Code"
-    echo "    connect.sh both     # 둘 다"
-    ;;
-esac
-echo
+  fi
+  echo "════════════════════════════════════════════════════════════"
+}
+
+# ─────────────────────────────────────────────────────────────
+# 마무리 안내 — 고른 구성요소에 맞는 connect.sh 명령
+# ─────────────────────────────────────────────────────────────
+print_next() {
+  local sel
+  sel="$(selected)"
+  echo
+  log "세팅 완료 (구성요소: ${sel:-none})"
+  echo
+  echo "  새 Git Bash 창을 연 뒤 접속:"
+  echo
+  echo "    connect.sh             # 터널만 (ssh mac)"
+  if [ "$WANT_TOOLBOX" = 1 ]; then echo "    connect.sh toolbox     # JetBrains Toolbox"; fi
+  if [ "$WANT_VSCODE"  = 1 ]; then echo "    connect.sh vscode      # VS Code"; fi
+  if [ "$WANT_HERDR"   = 1 ]; then echo "    connect.sh herdr       # WezTerm 새 창 → 맥의 herdr"; fi
+  if [ "$WANT_HERDR"   = 1 ]; then
+    echo
+    if [ -f "$WEZTERM_DIR/wezterm-gui.exe" ]; then
+      echo "  WezTerm 직접 실행: $WEZTERM_DIR/wezterm-gui.exe"
+    else
+      echo "  WezTerm 이 설치되지 않음 — 위 경고 확인 후 setup herdr 를 다시 실행하세요"
+    fi
+  fi
+  if [ -z "$sel" ]; then
+    echo
+    echo "  구성요소를 설치하려면 setup 명령 끝에 붙여 다시 실행 (여러 개, 순서 무관):"
+    echo "    toolbox   JetBrains Toolbox"
+    echo "    vscode    VS Code + Remote-SSH 확장"
+    echo "    herdr     WezTerm + ~/.wezterm.lua"
+    echo "    pt        PowerToys + 설정 백업"
+  fi
+  echo
+}
+
+# ─────────────────────────────────────────────────────────────
+# main — 항상 설치 항목 먼저, 고른 구성요소, 개인키 안내는 마지막
+# ─────────────────────────────────────────────────────────────
+main() {
+  parse_args "$@"
+  if [ -n "$(selected)" ]; then
+    log "구성요소: $(selected)"
+  else
+    log "구성요소 없음 (none) — 항상 설치 항목만 설치합니다"
+  fi
+
+  mkdir -p "$BIN_DIR"
+  cd "$TMP"
+
+  install_cloudflared
+  write_ssh_config
+  install_helpers
+
+  if [ "$WANT_TOOLBOX" = 1 ]; then install_toolbox;   fi
+  if [ "$WANT_VSCODE"  = 1 ]; then install_vscode;    fi
+  if [ "$WANT_HERDR"   = 1 ]; then install_wezterm;   fi
+  if [ "$WANT_PT"      = 1 ]; then install_powertoys; fi
+
+  guide_private_key
+  print_next
+}
+
+main "$@"
