@@ -2,12 +2,14 @@
 #
 # 맥 연결 — 매번 실행
 #
-#   connect.sh [target]
-#     target: toolbox (기본) | vscode | both | none
-#     별칭   : tb=toolbox, code/vs=vscode, all=both
+#   connect.sh [대상...]     — 여러 개, 순서 무관. setup.sh 와 같은 이름
+#     toolbox   JetBrains Toolbox
+#     vscode    VS Code (Remote-SSH)
+#     herdr     WezTerm 새 창 → 맥의 herdr
+#     none      터널만 (인자 없음과 같음. 다른 대상과 함께 오면 무시)
 #
 #   공통 준비: 사전확인 → ssh-agent → (터널) → 검증
-#   그 다음 target 앱 실행.
+#   그 다음 고른 앱 실행.
 #
 #   터널이 이미 살아 있으면(포워더 PID + ssh 응답) 재구축 없이 재사용한다.
 #   → Toolbox 를 쓰는 중에 `connect.sh vscode` 를 실행해도 기존 세션이 끊기지 않는다.
@@ -27,21 +29,32 @@
 set -u
 
 # ─────────────────────────────────────────────────────────────
-# target 파싱
+# 대상 파싱 — 여러 개, 순서 무관 (인자 없음 = none: 터널만)
 # ─────────────────────────────────────────────────────────────
-case "${1:-toolbox}" in
-  toolbox|tb)        TARGET=toolbox ;;
-  vscode|vs|code)    TARGET=vscode  ;;
-  both|all)          TARGET=both    ;;
-  none|"")           TARGET=none    ;;
-  -h|--help|help)
-    echo "usage: connect.sh [toolbox|vscode|both|none]"
-    exit 0 ;;
-  *)
-    printf '\033[31m[connect] ERROR:\033[0m 알 수 없는 target: %s\n' "$1" >&2
-    echo "usage: connect.sh [toolbox|vscode|both|none]" >&2
-    exit 1 ;;
-esac
+USAGE="usage: connect.sh [toolbox] [vscode] [herdr]   (인자 없음 = none: 터널만)"
+WANT_TOOLBOX=0
+WANT_VSCODE=0
+WANT_HERDR=0
+
+for arg in "$@"; do
+  case "$arg" in
+    toolbox)        WANT_TOOLBOX=1 ;;
+    vscode)         WANT_VSCODE=1  ;;
+    herdr)          WANT_HERDR=1   ;;
+    none)           ;;   # 터널만 — 다른 대상과 함께 오면 무시
+    -h|--help|help) echo "$USAGE"; exit 0 ;;
+    *)
+      printf '\033[31m[connect] ERROR:\033[0m 알 수 없는 대상: %s\n' "$arg" >&2
+      echo "$USAGE" >&2
+      exit 1 ;;
+  esac
+done
+
+TARGETS=""
+if [ "$WANT_TOOLBOX" = 1 ]; then TARGETS="$TARGETS toolbox"; fi
+if [ "$WANT_VSCODE"  = 1 ]; then TARGETS="$TARGETS vscode";  fi
+if [ "$WANT_HERDR"   = 1 ]; then TARGETS="$TARGETS herdr";   fi
+TARGETS="${TARGETS# }"
 
 MAC_USER="taeung"
 SSH_HOST="ssh.11104002.xyz"
@@ -52,6 +65,7 @@ GITBIN="/c/Program Files/Git/usr/bin"
 TOOLBOX="$HOME/AppData/Local/JetBrains/Toolbox/bin/jetbrains-toolbox.exe"
 VSCODE_USER="$HOME/AppData/Local/Programs/Microsoft VS Code/Code.exe"
 VSCODE_SYS="/c/Program Files/Microsoft VS Code/Code.exe"
+WEZTERM="$HOME/bin/wezterm/wezterm-gui.exe"            # setup.sh herdr 가 설치
 LOG="$HOME/.cache/cf-forwarder.log"
 PIDFILE="$HOME/.cache/cf-forwarder.pid"
 AGENT_SOCK="$HOME/.ssh/agent.sock"     # ssh-agent 소켓 (고정 경로, ssh config 의 IdentityAgent)
@@ -419,7 +433,7 @@ launch_toolbox() {
       log "Toolbox 이미 실행 중 (SSH: Git ssh)"
     else
       warn "Toolbox 가 이미 실행 중인데 SSH 실행 파일이 Git ssh 가 아님 → passphrase 를 물을 수 있음"
-      warn "  stop.sh 후 connect.sh 를 다시 실행하거나,"
+      warn "  stop.sh 후 connect.sh toolbox 를 다시 실행하거나,"
       warn "  Toolbox 설정 → Advanced → SSH executable location → $GIT_SSH_WIN"
     fi
   else
@@ -454,24 +468,46 @@ launch_vscode() {
   fi
 }
 
-case "$TARGET" in
-  toolbox) launch_toolbox ;;
-  vscode)  launch_vscode  ;;
-  both)    launch_toolbox; launch_vscode ;;
-  none)    log "앱 실행 건너뜀 (target=none)" ;;
-esac
+# herdr — WezTerm 새 창에서 맥의 herdr 에 접속 (WezTerm 이 떠 있어도 항상 새 창)
+#   Git 의 ssh.exe 를 직접 실행한다 (Windows 내장 OpenSSH 8.1 은 고정 agent 소켓을 못 쓴다).
+#   비대화형 ssh 명령은 맥의 로그인 셸 설정(brew PATH 등)을 읽지 않으므로 로그인·대화형 셸로 감싼다.
+#   herdr 에서 분리(ctrl+b q)하면 창이 닫히고 herdr 는 맥에서 계속 돈다.
+#   맥에 herdr 가 없으면 창에 'command not found: herdr' 가 남는다 (실패한 창은 닫히지 않음).
+#   ~/.wezterm.lua 의 Ctrl+Shift+H 도 같은 명령이다.
+launch_herdr() {
+  if [ ! -f "$WEZTERM" ]; then
+    warn "WezTerm 을 찾을 수 없음: $WEZTERM — setup.sh herdr 를 먼저 실행하세요"
+    return
+  fi
+  log "WezTerm 새 창 → 맥의 herdr"
+  "$WEZTERM" start -- "$GIT_SSH_WIN" -t mac 'exec $SHELL -lic herdr' >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+}
+
+if [ "$WANT_TOOLBOX" = 1 ]; then launch_toolbox; fi
+if [ "$WANT_VSCODE"  = 1 ]; then launch_vscode;  fi
+if [ "$WANT_HERDR"   = 1 ]; then launch_herdr;   fi
+if [ -z "$TARGETS" ]; then log "앱 실행 건너뜀 (none — 터널만)"; fi
 
 # ─────────────────────────────────────────────────────────────
 # 4) 안내
 # ─────────────────────────────────────────────────────────────
 echo
-log "준비 완료 (target: $TARGET)"
-case "$TARGET" in
-  toolbox|both) echo "    Gateway 접속    →  127.0.0.1:${LOCAL_PORT}  (user: ${MAC_USER})" ;;
-esac
-case "$TARGET" in
-  vscode|both)  echo "    Remote-SSH 접속 →  F1 → 'Remote-SSH: Connect to Host' → mac" ;;
-esac
+log "준비 완료 (대상: ${TARGETS:-none})"
+if [ "$WANT_TOOLBOX" = 1 ]; then
+  echo "    Gateway 접속    →  127.0.0.1:${LOCAL_PORT}  (user: ${MAC_USER})"
+fi
+if [ "$WANT_VSCODE" = 1 ]; then
+  echo "    Remote-SSH 접속 →  F1 → 'Remote-SSH: Connect to Host' → mac"
+fi
+if [ "$WANT_HERDR" = 1 ]; then
+  echo "    herdr 분리      →  ctrl+b q  (맥에서 계속 실행, 창은 닫힘)"
+  echo "    herdr 다시 접속 →  WezTerm 에서 Ctrl+Shift+H  또는  connect.sh herdr"
+  echo "    창에 'command not found: herdr' → 맥에서 brew install herdr"
+fi
 echo "    터미널 접속     →  ssh mac"
+if [ -z "$TARGETS" ]; then
+  echo "    앱 실행         →  connect.sh toolbox | vscode | herdr  (여러 개 가능)"
+fi
 echo "    종료            →  stop.sh"
 echo
